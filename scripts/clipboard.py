@@ -1,105 +1,108 @@
-import contextlib
-import gradio as gr
-import modules.scripts as scripts
-from modules import script_callbacks, shared
 import os
+import gradio as gr
+from modules import script_callbacks, shared
 
+# Directory to store SSH keys
+SSH_KEYS_DIR = os.path.expanduser("~/.ssh")
 
-script_dir = scripts.basedir()
+def browse_files(path='/'):
+    try:
+        files = os.listdir(path)
+        return [{"name": f, "path": os.path.join(path, f), "is_dir": os.path.isdir(os.path.join(path, f))} for f in files]
+    except Exception as e:
+        return [{"name": str(e), "path": "", "is_dir": False}]
 
-class ClipboardScript(scripts.Script):
-    def __init__(self) -> None:
-        super().__init__()
-    
-    def title(self):
-        return "Clipboard example"
-    
-    clipboard_path = shared.opts.data.get("clipboard_path", os.path.join(script_dir, "scripts"))
+def download_file(file_path):
+    try:
+        with open(file_path, 'rb') as f:
+            return f.read()
+    except Exception as e:
+        return str(e)
 
-    def ui(self, is_img2img):
-        return ClipboardScript.clipboard_path
+def upload_file(file, destination):
+    try:
+        with open(os.path.join(destination, file.name), 'wb') as f:
+            f.write(file.read())
+        return f"File {file.name} uploaded to {destination}."
+    except Exception as e:
+        return str(e)
 
-    def show(self, is_img2img):
-        # You don't have to go select it from "script"
-        return scripts.AlwaysVisible
+def save_file(file_path, content):
+    try:
+        with open(file_path, 'w') as f:
+            f.write(content)
+        return f"File {file_path} saved."
+    except Exception as e:
+        return str(e)
 
-    def ui(self, is_img2img):
-        with gr.Group():
-            with gr.Accordion("Clipboard", open=False):
-                gr.Markdown(value="You can save and load text here. You can find and change the store location from Options/Clipboard")
-                with gr.Row():
-                    clipboard = gr.Textbox(label="Saved text", lines=5)
-                with gr.Row():
-                    load_text = gr.Button(value='Load', variant='primary')
-                    save_text = gr.Button(value='Save', variant='primary')
-                with gr.Row():
-                    load_backUp = gr.Button(value='Load Backup')
-                    save_backUp = gr.Button(value='Save Backup')
-        
-        with contextlib.suppress(AttributeError): # Ignore the error if the attribute is not present
-            if is_img2img:
-                save_text.click(fn=saveText, inputs=[clipboard], outputs=[clipboard])
-                save_backUp.click(fn=saveBackUp, inputs=[clipboard], outputs=[clipboard])
-                load_text.click(fn=loadText, inputs=[clipboard], outputs=[clipboard])
-                load_backUp.click(fn=loadBackUp, inputs=[clipboard], outputs=[clipboard])
-            else:
-                save_text.click(fn=saveText, inputs=[clipboard], outputs=[clipboard])
-                save_backUp.click(fn=saveBackUp, inputs=[clipboard], outputs=[clipboard])
-                load_text.click(fn=loadText, inputs=[clipboard], outputs=[clipboard])
-                load_backUp.click(fn=loadBackUp, inputs=[clipboard], outputs=[clipboard])
+def load_file(file_path):
+    try:
+        with open(file_path, 'r') as f:
+            return f.read()
+    except Exception as e:
+        return str(e)
 
-        return [clipboard, load_text, save_text, load_backUp, save_backUp]
+def on_ui_tabs():
+    with gr.Blocks(elem_id="file-browser", analytics_enabled=False) as ui_component:
 
-    
-    @staticmethod
-    def on_after_component(component, **_kwargs):
-        elem_id = getattr(component, "elem_id", None)
-             
-        if elem_id == "txt2img_generate":
-            ClipboardScript.txt2img_submit_button = component
-            return
-            
-        if elem_id == "img2img_generate":
-            ClipboardScript.img2img_submit_button = component
-            return   
+        def create_file_entry(file):
+            with gr.Row():
+                gr.Textbox(value=file["name"], label="", interactive=False)
+                if file["is_dir"]:
+                    gr.Button("Open", elem_id=f"open-{file['path']}").click(fn=lambda p: browse_files(p), inputs=None, outputs=files_list)
+                else:
+                    gr.Button("Download", elem_id=f"download-{file['path']}").click(fn=download_file, inputs=file["path"], outputs=download_output)
+                    gr.Button("Edit", elem_id=f"edit-{file['path']}").click(fn=load_file, inputs=file["path"], outputs=file_content)
+
+        with gr.Tab("File Browser"):
+            with gr.Row():
+                with gr.Column(scale=2):
+                    current_path = gr.Textbox(label="Current Path", value="/")
+                    files_list = gr.Column()
+                    browse_button = gr.Button("Browse")
+                    browse_button.click(fn=browse_files, inputs=current_path, outputs=files_list)
+                    
+                    gr.HTML("""
+                    <style>
+                        .gradio-container .file-entry {
+                            display: flex;
+                            align-items: center;
+                            justify-content: space-between;
+                        }
+                    </style>
+                    """)
+
+                with gr.Column(scale=1):
+                    download_path = gr.Textbox(label="Download File Path")
+                    download_button = gr.Button("Download")
+                    download_output = gr.File(label="Downloaded File")
+                    download_button.click(fn=download_file, inputs=download_path, outputs=download_output)
+
+                    upload_destination = gr.Textbox(label="Upload Destination Path")
+                    upload_file_input = gr.File(label="Upload File")
+                    upload_button = gr.Button("Upload")
+                    upload_output = gr.Textbox(label="Upload Status", interactive=False)
+                    upload_button.click(fn=upload_file, inputs=[upload_file_input, upload_destination], outputs=upload_output)
+
+                    edit_file_path = gr.Textbox(label="File Path to Edit")
+                    file_content = gr.Code(label="File Content", lines=20)
+                    save_button = gr.Button("Save")
+                    save_output = gr.Textbox(label="Save Status", interactive=False)
+                    save_button.click(fn=save_file, inputs=[edit_file_path, file_content], outputs=save_output)
+
+                    edit_button = gr.Button("Load File for Editing")
+                    edit_button.click(fn=load_file, inputs=edit_file_path, outputs=file_content)
+
+    return [(ui_component, "File Browser", "file-browser")]
 
 def on_ui_settings():
-    section = ("cliboard", "Clipboard")
-    shared.opts.add_option(
-        "clipboard_path",
-        shared.OptionInfo(
-            os.path.join(script_dir, "scripts"),
-            "Change path to save clipboard and backup (requires restart)",
-            gr.Textbox,
-            section=section,
-        ),
-    )
+    settings_section = ('file-browser', "File Browser")
+    options = {
+        "file_browser_default_path": shared.OptionInfo("/", "Default path for the file browser", gr.Textbox).needs_reload_ui(),
+    }
+    for name, opt in options.items():
+        opt.section = settings_section
+        shared.opts.add_option(name, opt)
 
-def saveText(new_text):
-    with open(ClipboardScript.clipboard_path + '/newText.txt', 'w') as f:
-        f.write(new_text)
-    
-    new_text=new_text
-    return new_text
-
-def loadText(new_text):
-    file = open(ClipboardScript.clipboard_path + "/newText.txt", "r")
-    new_text = file.read()
-
-    return new_text
-
-def saveBackUp(new_text):
-    with open(ClipboardScript.clipboard_path + '/newBackUp.txt', 'w') as f:
-        f.write(new_text)
-    
-    new_text=new_text
-    return new_text
-
-def loadBackUp(new_text):
-    file = open(ClipboardScript.clipboard_path + "/newBackUp.txt", "r")
-    new_text = file.read()
-
-    return new_text
-
+script_callbacks.on_ui_tabs(on_ui_tabs)
 script_callbacks.on_ui_settings(on_ui_settings)
-script_callbacks.on_after_component(ClipboardScript.on_after_component)
